@@ -1,0 +1,328 @@
+/* 
+ * Battery driver for One Laptop Per Child ($100 laptop) board. 
+ * 
+ * Â© 2006 David Woodhouse <dwmw2 [at] infradead> 
+ * 
+ * This program is free software; you can redistribute it and/or modify 
+ * it under the terms of the GNU General Public License version 2 as 
+ * published by the Free Software Foundation. 
+ */
+
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/device.h>
+#include "/usr/src/linux-headers-3.19.0-15-generic/include/config/generic/adc/battery.h"
+#include <linux/spinlock.h>
+#include <linux/err.h>
+#include <asm/io.h>
+
+#define wBAT_VOLTAGE 0xf900	/* *9.76/32, mV */
+#define wBAT_CURRENT 0xf902	/* *15.625/120, mA */
+#define wBAT_TEMP 0xf906	/* *256/1000, Â°C */
+#define wAMB_TEMP 0xf908	/* *256/1000, Â°C */
+#define SOC 0xf910		/* percentage */
+#define sMBAT_STATUS 0xfaa4
+#define sBAT_PRESENT 1
+#define sBAT_FULL 2
+#define sBAT_DESTROY 4
+#define sBAT_LOW 32
+#define sBAT_DISCHG 64
+#define sMCHARGE_STATUS 0xfaa5
+#define sBAT_CHARGE 1
+#define sBAT_OVERTEMP 4
+#define sBAT_NiMH 8
+#define sPOWER_FLAG 0xfa40
+#define ADAPTER_IN 1
+
+static int
+lock_ec (void)
+{
+  unsigned long timeo = jiffies HZ / 20;
+
+  while (1)
+    {
+      unsigned char lock = inb (0x6c) & 0x80;
+      if (!lock)
+	return 0;
+      if (time_after (jiffies, timeo))
+	return 1;
+      yield ();
+    }
+}
+
+static void
+unlock_ec (void)
+{
+  outb (0xff, 0x6c);
+}
+
+unsigned char
+read_ec_byte (unsigned short adr)
+{
+  outb (adr >> 8, 0x381);
+  outb (adr, 0x382);
+  return inb (0x383);
+}
+
+unsigned short
+read_ec_word (unsigned short adr)
+{
+  return (read_ec_byte (adr) << 8) | read_ec_byte (adr1);
+}
+
+unsigned long
+olpc_bat_status (struct battery_classdev *cdev, unsigned long mask)
+{
+  unsigned long result = 0;
+  unsigned short tmp;
+
+  if (lock_ec ())
+    {
+      printk (KERN_ERR "Failed to lock EC for battery access\n");
+      return BAT_STAT_ERROR;
+    }
+
+  if (mask & BAT_STAT_AC)
+    {
+      if (read_ec_byte (sPOWER_FLAG) & ADAPTER_IN)
+	result |= BAT_STAT_AC;
+    }
+  if (mask &
+      (BAT_STAT_PRESENT | BAT_STAT_FULL | BAT_STAT_FIRE | BAT_STAT_LOW |
+       BAT_STAT_DISCHARGING))
+    {
+      tmp = read_ec_byte (sMBAT_STATUS);
+
+      if (tmp & sBAT_PRESENT)
+	result |= BAT_STAT_PRESENT;
+      if (tmp & sBAT_FULL)
+	result |= BAT_STAT_FULL;
+      if (tmp & sBAT_DESTROY)
+	result |= BAT_STAT_FIRE;
+      if (tmp & sBAT_LOW)
+	result |= BAT_STAT_LOW;
+      if (tmp & sBAT_DISCHG)
+	result |= BAT_STAT_DISCHARGING;
+    }
+  if (mask & (BAT_STAT_CHARGING | BAT_STAT_OVERTEMP))
+    {
+      tmp = read_ec_byte (sMCHARGE_STATUS);
+      if (tmp & sBAT_CHARGE)
+	result |= BAT_STAT_CHARGING;
+      if (tmp & sBAT_OVERTEMP)
+	result |= BAT_STAT_OVERTEMP;
+    }
+  unlock_ec ();
+  return result;
+}
+
+int
+olpc_bat_query_long (struct battery_classdev *dev, int attr, long *result)
+{
+  int ret = 0;
+
+  if (lock_ec ())
+    return -EIO;
+
+  if (!(read_ec_byte (sMBAT_STATUS) & sBAT_PRESENT))
+    {
+      ret = -ENODEV;
+    }
+  else if (attr == BAT_INFO_VOLTAGE)
+    {
+      *result = read_ec_word (wBAT_VOLTAGE) * 9760 / 32000;
+    }
+  else if (attr == BAT_INFO_CURRENT)
+    {
+      *result = read_ec_word (wBAT_CURRENT) * 15625 / 120000;
+    }
+  else if (attr == BAT_INFO_TEMP1)
+    {
+      *result = read_ec_word (wBAT_TEMP) * 1000 / 256;
+    }
+  else if (attr == BAT_INFO_TEMP2)
+    {
+      *result = read_ec_word (wAMB_TEMP) * 1000 / 256;
+    }
+  else if (attr == BAT_INFO_CHARGE_PCT)
+    {
+      *result = read_ec_byte (SOC);
+    }
+  else
+    ret = -EINVAL;
+
+  unlock_ec ();
+  return ret;
+}
+
+int
+olpc_bat_query_str (struct battery_classdev *dev, int attr, char *str,
+		    int len)
+{
+  int ret = 0;
+
+  if (attr == BAT_INFO_TYPE)
+    {
+      snprintf (str, len, "OLPC");
+    }
+  else if (attr == BAT_INFO_TEMP1_NAME)
+    {
+      snprintf (str, len, "battery");
+    }
+  else if (attr == BAT_INFO_TEMP2_NAME)
+    {
+      snprintf (str, len, "ambient");
+    }
+  else if (!(read_ec_byte (sMBAT_STATUS) & sBAT_PRESENT))
+    {
+      ret = -ENODEV;
+    }
+  else if (attr == BAT_INFO_TECHNOLOGY)
+    {
+      if (lock_ec ())
+	ret = -EIO;
+      else
+	{
+	  unsigned short tmp = read_ec_byte (sMCHARGE_STATUS);
+	  if (tmp & sBAT_NiMH)
+	    snprintf (str, len, "NiMH");
+	  else
+	    snprintf (str, len, "unknown");
+	}
+      unlock_ec ();
+    }
+  else
+    {
+      ret = -EINVAL;
+    }
+
+  return ret;
+}
+
+static struct battery_classdev olpc_bat = {
+  .name = "OLPC",
+  .capabilities = (1 << BAT_INFO_VOLTAGE) |
+    (1 << BAT_INFO_CURRENT) |
+    (1 << BAT_INFO_TEMP1) |
+    (1 << BAT_INFO_TEMP2) |
+    (1 << BAT_INFO_CHARGE_PCT) |
+    (1 << BAT_INFO_TYPE) |
+    (1 << BAT_INFO_TECHNOLOGY) |
+    (1 << BAT_INFO_TEMP1_NAME) | (1 << BAT_INFO_TEMP2_NAME),
+  .status_cap = BAT_STAT_AC | BAT_STAT_PRESENT | BAT_STAT_LOW |
+    BAT_STAT_FULL | BAT_STAT_CHARGING | BAT_STAT_DISCHARGING |
+    BAT_STAT_OVERTEMP | BAT_STAT_FIRE,
+  .status = olpc_bat_status,
+  .query_long = olpc_bat_query_long,
+  .query_str = olpc_bat_query_str,
+};
+
+void __exit
+olpc_bat_exit (void)
+{
+  battery_classdev_unregister (&olpc_bat);
+}
+
+int __init
+olpc_bat_init (void)
+{
+  battery_classdev_register (NULL, &olpc_bat);
+  return 0;
+}
+
+module_init (olpc_bat_init);
+module_exit (olpc_bat_exit);
+
+MODULE_AUTHOR ("David Woodhouse <dwmw2 [at] infradead>");
+MODULE_LICENSE ("GPL");
+MODULE_DESCRIPTION ("Battery class interface");
+/*--- /dev/null 2006-10-01 17:20:05.827666723 0100 
+ include/linux/battery.h 2006-10-23 17:11:28.000000000 0100 
+@@ -0,0 1,84 @@ */
+/* 
+ * Driver model for batteries 
+ * 
+ * Â© 2006 David Woodhouse <dwmw2 [at] infradead> 
+ * 
+ * Based on LED Class support, by John Lenz and Richard Purdie: 
+ * 
+ * Â© 2005 John Lenz <lenz [at] cs> 
+ * Â© 2005-2006 Richard Purdie <rpurdie [at] openedhand> 
+ * 
+ * This program is free software; you can redistribute it and/or modify 
+ * it under the terms of the GNU General Public License version 2 as 
+ * published by the Free Software Foundation. 
+ * 
+ */
+#ifndef __LINUX_BATTERY_H__
+#define __LINUX_BATTERY_H__
+
+struct device;
+struct class_device;
+
+/* 
+ * Battery Core 
+ */
+#define BAT_STAT_AC (1<<0)
+#define BAT_STAT_PRESENT (1<<1)
+#define BAT_STAT_LOW (1<<2)
+#define BAT_STAT_FULL (1<<3)
+#define BAT_STAT_CHARGING (1<<4)
+#define BAT_STAT_DISCHARGING (1<<5)
+#define BAT_STAT_OVERTEMP (1<<6)
+#define BAT_STAT_FIRE (1<<7)
+#define BAT_STAT_CHARGE_DONE (1<<8)
+
+#define BAT_STAT_ERROR (1<<31)
+
+#define BAT_INFO_TEMP1 (0)	/* Â°C/1000 */
+#define BAT_INFO_TEMP1_NAME (1)	/* string */
+
+#define BAT_INFO_TEMP2 (2)	/* Â°C/1000 */
+#define BAT_INFO_TEMP2_NAME (3)	/* string */
+
+#define BAT_INFO_VOLTAGE (4)	/* mV */
+#define BAT_INFO_VOLTAGE_DESIGN (5)	/* mV */
+
+#define BAT_INFO_CURRENT (6)	/* mA */
+
+#define BAT_INFO_CHARGE_RATE (7)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE (8)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE_MAX (9)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE_LAST (10)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE_LOW (11)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE_WARN (12)	/* BAT_INFO_CHARGE_UNITS */
+#define BAT_INFO_CHARGE_UNITS (13)	/* string */
+#define BAT_INFO_CHARGE_PCT (14)	/* % */
+
+#define BAT_INFO_TIME_REMAINING (15)	/* seconds */
+
+#define BAT_INFO_MANUFACTURER (16)	/* string */
+#define BAT_INFO_TECHNOLOGY (17)	/* string */
+#define BAT_INFO_MODEL (18)	/* string */
+#define BAT_INFO_SERIAL (19)	/* string */
+#define BAT_INFO_TYPE (20)	/* string */
+#define BAT_INFO_OEM_INFO (21)	/* string */
+
+struct battery_classdev
+{
+  const char *name;
+  /* Capabilities of this battery driver */
+  unsigned long capabilities, status_cap;
+
+  /* Query functions */
+  unsigned long (*status) (struct battery_classdev *, unsigned long mask);
+  int (*query_long) (struct battery_classdev *, int attr, long *result);
+  int (*query_str) (struct battery_classdev *, int attr, char *str,
+		    ssize_t len);
+
+  struct class_device *class_dev;
+  struct list_head node;	/* Battery Device list */
+};
+
+extern int battery_classdev_register (struct device *parent,
+				      struct battery_classdev *battery_cdev);
+extern void battery_classdev_unregister (struct battery_classdev
+					 *battery_cdev);
+
+#endif /* __LINUX_BATTERY_H__ */

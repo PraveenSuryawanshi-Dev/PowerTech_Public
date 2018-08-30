@@ -1,0 +1,8 @@
+1 76 2602000 UNKNWON DELL XRDW256 Samsung SD 48622 UNKNOWN NORMAL TRICKLE UNKNOWN
+
+to compile the modul use command  : make on terminal
+to insert the module on kernel use : sudo insmod module.ko
+to remove the module from kernel use: sudo rmmod modeule.ko
+
+to display info on console about the module use : dmesg  or dmesg | tail
+

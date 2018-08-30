@@ -1,0 +1,145 @@
+/*
+NAME : PRAVEEN SURYAWANSHI (43) && PRIYANKA BORKAR (410)
+class for Client.java
+*/
+
+import java.net.*;
+import java.io.*;
+
+public class Client
+{
+  private String server_name = "localhost";
+  private int port = 5000;
+  private Socket client;
+  private BufferedReader br;
+  private Client open = new Client ();
+
+  /*CREATING SOCKET */
+  public void socket ()
+  {
+    try
+    {
+      br = new BufferedReader (new InputStreamReader (System.in));
+      System.out.println ("Connecting to " + server_name + " on port " +
+			  port);
+      client = new Socket (server_name, port);
+      System.out.println ("Just connected to " +
+			  client.getRemoteSocketAddress ());
+    }
+    catch (Exception ex)
+    {
+      ex.printStackTrace ();
+    }
+  }
+
+
+
+
+  /*SENDING  MESSAGE TO SERVER */
+  public void send_message_to_server (String message)
+  {
+    try
+    {
+      OutputStream outToServer = client.getOutputStream ();
+      DataOutputStream out = new DataOutputStream (outToServer);
+      out.writeUTF ("Hello from " + client.getLocalSocketAddress ());
+    }
+    catch (Exception ex)
+    {
+      ex.printStackTrace ();
+    }
+  }
+
+
+
+
+
+
+
+
+  /*READING MESSAGE FROM SERVER */
+  public void read_message_from_server ()
+  {
+    try
+    {
+      InputStream inFromServer = client.getInputStream ();
+      DataInputStream in = new DataInputStream (inFromServer);
+      System.out.println ("Server says " + in.readUTF ());
+    }
+    catch (Exception ex)
+    {
+      ex.printStackTrace ();
+    }
+  }
+
+
+
+
+
+
+
+  /* CLOSING THE CLIENT CONNECTION */
+  public void close_Client ()
+  {
+    try
+    {
+      client.close ();
+    }
+    catch (Exception ex)
+    {
+      ex.printStackTrace ();
+    }
+  }
+
+
+
+
+  public void Task_to_do ()
+  {
+    while (true)
+      {
+	System.out.println ("\n 1: READ : \n 2: WRITE \n 3: CLOSE");
+	Systyem.out.println ("\n ENTER YOUR CHOICE :");
+	choice = Integer.parseInt (br.readLine ());
+
+	switch (choice)
+	  {
+	  case 1:
+	    open.read_message_from_server ();
+
+	    break;
+	  case 2:
+	    open.send_message_to_server (br.readLine ());
+	    break;
+	  case 3:
+	    open.close_client ();
+	    break;
+	  default:
+	    System.out.printl ("ERROR : INVALID SELECTION ");
+
+	    break;
+	  }
+      }
+
+
+
+  }
+
+
+  public static void main (String[]args)
+  {
+
+    try
+    {
+
+      open.socket ();
+      open.Task_to_do ();
+
+
+
+    } catch (Exception e)
+    {
+      e.printStackTrace ();
+    }
+  }
+}

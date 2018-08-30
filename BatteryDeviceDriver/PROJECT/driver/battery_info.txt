@@ -1,0 +1,24 @@
+  native-path:          BAT0
+  vendor:               Samsung SD
+  model:                DELL XRDW256
+  serial:               48622
+  power supply:         yes
+  updated:              Friday 11 March 2016 11:23:26 AM IST (80 seconds ago)
+  has history:          yes
+  has statistics:       yes
+  battery
+    present:             yes
+    rechargeable:        yes
+    state:               fully-charged
+    warning-level:       none
+    energy:              41.44 Wh
+    energy-empty:        0 Wh
+    energy-full:         41.44 Wh
+    energy-full-design:  41.44 Wh
+    energy-rate:         0.0148 W
+    voltage:             16.822 V
+    percentage:          100%
+    capacity:            95.6786%
+    technology:          lithium-ion
+    icon-name:          'battery-full-charged-symbolic'
+

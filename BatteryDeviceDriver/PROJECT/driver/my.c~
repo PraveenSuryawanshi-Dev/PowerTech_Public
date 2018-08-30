@@ -1,0 +1,134 @@
+#include<linux/module.h>
+#include<linux/kernel.h>
+#include<linux/fs.h>
+#include<linux/cdev.h>
+#include<linux/semaphore.h>
+#include<asm/uaccess.h>
+
+//setp1 creating a structure for our device driver :)
+
+struct battery_device
+{
+  char data[100];
+  struct semaphore sem;
+} battery_device_obj;
+
+//setp2 to later register our device we need a cdev object and some other variables
+
+struct cdev *mcdev;
+int major_number = 0;
+int ret = 0;
+
+dev_t dev_num;
+
+#define DEVICE_NAME "BATTERY_CHARACTER_DEVICE_DRIVER"
+
+
+int battery_device_open (struct inode *inode, struct file *fp)
+{
+// this allow to one  device at  atime using semaphore exclusive lock
+  if (down_interruptible (&battery_device_obj.sem) != 0)
+    {
+      printk (KERN_ALERT
+	      "BATTERY_CHARACTER_DEVICE_DRIVER: COULDN'T LOCK DURING DEVICE OPENING");
+      return -1;
+    }
+  printk (KERN_INFO "BATTERY_CHARACTER_DEVICE_DRIVER: OPENED DEVICE");
+
+}
+
+
+
+//ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+ssize_t battery_device_read (struct file * fp, char *buffer, size_t buff_count, loff_t * current_offset)
+{
+  printk (KERN_INFO "BATTERY_CHARACTER_DEVICE_DRIVER: READING MODE...");
+  ret = copy_from_user (battery_device_obj.data, buffer, buff_count);
+  return ret;
+
+}
+
+
+//ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+ssize_t battery_device_write (struct file * fp, char *buffer, size_t buff_count, loff_t * current_offset)
+{
+  printk (KERN_INFO " BATTERY_CHARACTER_DEVICE_DRIVER:WRITING MODE...");
+  ret = copy_from_user (battery_device_obj.data, buffer, buff_count);
+  return ret;
+
+}
+
+
+ssize_t battery_device_close (struct inode * inode, struct file * fp)
+{
+  up (&battery_device_obj.sem);
+  printk (KERN_INFO "BATTERY_CHARACTER_DEVICE_DRIVER: CLOSED DEVICE");
+  return 0;
+
+}
+
+
+
+
+struct file_operations fops = 
+{
+  .owner = THIS_MODULE,
+  .open = battery_device_open,
+  .release = battery_device_close,
+  .write = battery_device_write,
+  .read = battery_device_read,
+};
+
+
+static int battery_driver_entry (void)
+{
+
+  // step 3 
+
+  ret = alloc_chrdev_region (&dev_num, 22, 32, DEVICE_NAME);
+  if (ret < 0)
+    {
+      printk (KERN_ALERT
+	      " BATTERY_CHARACTER_DEVICE_DRIVER FAILED TO ALLOCATE A MAJOR NUMBER ");
+
+      return ret;
+    }
+
+  major_number = MAJOR (dev_num);
+  printk (KERN_INFO
+	  " BATTERY_CHARACTER_DEVICE_DRIVER ALLOCATE A MAJOR NUMBER:%d ",
+	  major_number);
+  printk (KERN_INFO " USE mknod  slash dev slash %s c %d  device file", DEVICE_NAME, major_number);	// dmesg
+
+
+  mcdev = cdev_alloc ();
+  mcdev->ops = &fops;
+  mcdev->owner = THIS_MODULE;
+
+  ret = cdev_add (mcdev, dev_num, 1);
+  if (ret < 0)
+    {
+      printk (KERN_ALERT
+	      "BATTERY_CHARACTER_DEVICE_DRIVER UNABLE TO ADD CDEV TO KERNEL:");
+      return ret;
+    }
+
+  sema_init (&battery_device_obj.sem, 1);
+
+return 1;
+}
+
+static void battery_driver_exit (void)
+{
+  cdev_del (mcdev);
+  unregister_chrdev_region (dev_num, 1);
+  printk (KERN_INFO "BATTERY_CHARACTER_DEVICE_DRIVER UNLOADED .");
+
+}
+
+
+//registering driver macro
+module_init (battery_driver_entry);
+
+//unregistering driver maco
+module_exit (battery_driver_exit);
